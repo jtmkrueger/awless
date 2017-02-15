@@ -28,6 +28,73 @@ import (
 	"github.com/wallix/awless/template/driver"
 )
 
+type simpleDriver struct{}
+
+func (r *simpleDriver) Lookup(lookups ...string) driver.DriverFn {
+	_, entity := lookups[0], lookups[1]
+
+	return func(params map[string]interface{}) (interface{}, error) {
+		return fmt.Sprintf("%s-123", entity), nil
+	}
+}
+
+func (r *simpleDriver) SetLogger(*logger.Logger) {}
+func (r *simpleDriver) SetDryRun(bool)           {}
+
+func TestRunSomeTemplate(t *testing.T) {
+	tcases := []struct {
+		in, out     string
+		holes       map[string]interface{}
+		expResolved map[string]interface{}
+	}{
+		{
+			in:          "vpc = create vpc name=myvpc\nsub = create subnet cidr=10.0.0.24 vpc=$vpc\ninst = create instance type=t2.micro subnet=$sub",
+			out:         "vpc = create vpc name=myvpc\nsub = create subnet cidr=10.0.0.24 vpc=vpc-123\ninst = create instance subnet=subnet-123 type=t2.micro",
+			expResolved: map[string]interface{}{},
+		},
+		{
+			in:          "var cidr = 10.0.0.24\ncreate vpc cidr=$cidr\ncreate subnet cidr=$cidr",
+			out:         "create vpc cidr=10.0.0.24\ncreate subnet cidr=10.0.0.24",
+			expResolved: map[string]interface{}{},
+		},
+		{
+			in:          "var cidr = 10.0.0.25\ncreate vpc cidr=$cidr\nvar cidr = 10.0.0.24\ncreate subnet cidr=$cidr",
+			out:         "create vpc cidr=10.0.0.25\ncreate subnet cidr=10.0.0.24",
+			expResolved: map[string]interface{}{},
+		},
+		{
+			in:          "var cidr = {vpc.cidr}\ncreate vpc cidr=$cidr\nvar cidr = {othervpc.cidr}\ncreate subnet cidr=$cidr",
+			out:         "create vpc cidr=10.0.0.25\ncreate subnet cidr=10.0.0.24",
+			holes:       map[string]interface{}{"vpc.cidr": "10.0.0.25", "othervpc.cidr": "10.0.0.24"},
+			expResolved: map[string]interface{}{"vpc.cidr": "10.0.0.25", "othervpc.cidr": "10.0.0.24"},
+		},
+	}
+
+	for idx, tc := range tcases {
+		tpl, err := Parse(tc.in)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		resolved, err := tpl.ResolveTemplate(tc.holes)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := resolved, tc.expResolved; !reflect.DeepEqual(got, want) {
+			t.Fatalf("%d. \ngot:\n%#v\n\nwant:\n%#v", idx+1, got, want)
+		}
+
+		tpl, err = tpl.Run(&simpleDriver{})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if got, want := tpl.String(), tc.out; got != want {
+			t.Fatalf("%d. \ngot:\n%s\n\nwant:\n%s", idx+1, got, want)
+		}
+	}
+}
+
 type noopDriver struct{}
 
 func (d *noopDriver) Lookup(lookups ...string) driver.DriverFn {

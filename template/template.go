@@ -32,7 +32,7 @@ type Template struct {
 }
 
 func (s *Template) Run(d driver.Driver) (*Template, error) {
-	vars := map[string]interface{}{}
+	var vars = make(map[string]interface{})
 
 	current := &Template{AST: s.Clone()}
 
@@ -47,6 +47,9 @@ func (s *Template) Run(d driver.Driver) (*Template, error) {
 			if sts.Result, sts.Err = fn(expr.Params); sts.Err != nil {
 				return current, sts.Err
 			}
+		case *ast.VarNode:
+			v := sts.Node.(*ast.VarNode)
+			vars[v.I.Ident] = v.I.Val
 		case *ast.DeclarationNode:
 			ident := sts.Node.(*ast.DeclarationNode).Left
 			expr := sts.Node.(*ast.DeclarationNode).Right
@@ -62,6 +65,8 @@ func (s *Template) Run(d driver.Driver) (*Template, error) {
 			vars[ident.Ident] = ident.Val
 		}
 	}
+
+	current.Statements = current.ExecutionStatements()
 
 	return current, nil
 }
@@ -135,14 +140,22 @@ func (s *Template) MergeParams(newParams map[string]interface{}) {
 
 func (s *Template) ResolveTemplate(refs map[string]interface{}) (map[string]interface{}, error) {
 	resolved := make(map[string]interface{})
-	each := func(expr *ast.ExpressionNode) {
+
+	each := func(vnode *ast.VarNode) {
+		processed := vnode.ProcessHoles(refs)
+		for key, v := range processed {
+			resolved[key] = v
+		}
+	}
+	s.visitVarNodes(each)
+
+	exprEach := func(expr *ast.ExpressionNode) {
 		processed := expr.ProcessHoles(refs)
 		for key, v := range processed {
 			resolved[expr.Entity+"."+key] = v
 		}
 	}
-
-	s.visitExpressionNodes(each)
+	s.visitExpressionNodes(exprEach)
 
 	return resolved, nil
 }
@@ -181,6 +194,15 @@ func (s *Template) visitExpressionNodes(fn func(n *ast.ExpressionNode)) {
 	}
 }
 
+func (s *Template) visitVarNodes(fn func(n *ast.VarNode)) {
+	for _, sts := range s.Statements {
+		switch sts.Node.(type) {
+		case *ast.VarNode:
+			fn(sts.Node.(*ast.VarNode))
+		}
+	}
+}
+
 type TemplateExecution struct {
 	ID       string
 	Executed []*ExecutedStatement
@@ -210,7 +232,7 @@ func NewTemplateExecution(tpl *Template) *TemplateExecution {
 		ID: ulid.MustNew(ulid.Timestamp(time.Now()), rand.Reader).String(),
 	}
 
-	for _, sts := range tpl.Statements {
+	for _, sts := range tpl.ExecutionStatements() {
 		var errMsg string
 		if sts.Err != nil {
 			errMsg = sts.Err.Error()

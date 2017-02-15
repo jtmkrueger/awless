@@ -103,7 +103,7 @@ func runTemplate(templ *template.Template, defaults map[string]interface{}) erro
 	)
 	awsDriver.SetLogger(logger.DefaultLogger)
 
-	for _, st := range templ.Statements {
+	for _, st := range templ.ExecutionStatements() {
 		if validators, ok := validation.ValidatorsPerActions[st.Action()]; ok {
 			graph := sync.LoadCurrentLocalGraph(awscloud.ServicePerResourceType[st.Entity()])
 			for _, v := range validators {
